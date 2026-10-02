@@ -1,5 +1,6 @@
+from google.genai import types
 
-from ollama import chat
+from llm import client, MODEL
 
 from tools import (
     calculate,
@@ -14,16 +15,9 @@ from tools import (
 )
 
 
-
-# MODEL
-
-
-MODEL = "qwen2.5"
-
-
-
+# --------------------------------------------------
 # TOOL REGISTRY
-
+# --------------------------------------------------
 
 available_tools = {
     "calculate": calculate,
@@ -38,168 +32,277 @@ available_tools = {
 }
 
 
+# --------------------------------------------------
+# TOOL DECLARATIONS
+# --------------------------------------------------
 
-# SYSTEM PROMPT
+tool_declarations = [
+    {
+        "name": "calculate",
+        "description": "Add two numbers together.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "multiply",
+        "description": "Multiply two numbers.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "subtract",
+        "description": "Subtract b from a.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "integer"},
+                "b": {"type": "integer"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "divide",
+        "description": "Divide a by b.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "a": {"type": "number"},
+                "b": {"type": "number"},
+            },
+            "required": ["a", "b"],
+        },
+    },
+    {
+        "name": "calculate_percentage",
+        "description": "Calculate a percentage of a value.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number"},
+                "percentage": {"type": "number"},
+            },
+            "required": ["value", "percentage"],
+        },
+    },
+    {
+        "name": "get_current_datetime",
+        "description": "Get the current date and time.",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "convert_units",
+        "description": "Convert between supported units.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "value": {"type": "number"},
+                "from_unit": {"type": "string"},
+                "to_unit": {"type": "string"},
+            },
+            "required": ["value", "from_unit", "to_unit"],
+        },
+    },
+    {
+        "name": "get_weather",
+        "description": "Get current weather for a city.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "city": {"type": "string"},
+            },
+            "required": ["city"],
+        },
+    },
+    {
+        "name": "web_search",
+        "description": "Search the web for current information.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+    },
+]
 
 
-SYSTEM_PROMPT = (
-    "You are a helpful AI assistant. "
-    "Use tools when necessary. "
-    "For calculations, use calculator tools. "
-    "For weather questions, use the weather tool. "
-    "For current or web-based information, use web_search. "
-    "Do not invent tool results. "
-    "Always follow the user's requested format and length. "
-    "If the user asks for 2 lines, answer in exactly 2 lines. "
-    "Do not copy or repeat raw tool results. "
-    "Summarize tool results into a concise final answer."
+gemini_tools = types.Tool(
+    function_declarations=tool_declarations
 )
 
 
+# --------------------------------------------------
+# SYSTEM INSTRUCTION
+# --------------------------------------------------
 
-# AGENT FUNCTION
+SYSTEM_PROMPT = """
+You are a helpful AI assistant.
 
+Use tools when necessary.
+
+For calculations, use calculator tools.
+
+For weather questions, use the weather tool.
+
+For current or web-based information, use web_search.
+
+Do not invent tool results.
+
+Always follow the user's requested format and length.
+
+If the user asks for 2 lines, answer in exactly 2 lines.
+
+Do not copy or repeat raw tool results.
+
+Summarize tool results into a concise final answer.
+"""
+
+
+# --------------------------------------------------
+# AGENT
+# --------------------------------------------------
 
 def run_agent(user_input, messages):
 
-    # Add user message to conversation history
-   
-
+    # Add the new user message to application history
     messages.append({
         "role": "user",
         "content": user_input,
     })
 
+    # Convert our simple chat history into Gemini format
+    contents = []
 
-   
-    # AGENT LOOP
-   
+    for message in messages:
+
+        role = message["role"]
+        content = message["content"]
+
+        if not content:
+            continue
+
+        if role == "user":
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=content)],
+                )
+            )
+
+        elif role == "assistant":
+            contents.append(
+                types.Content(
+                    role="model",
+                    parts=[types.Part(text=content)],
+                )
+            )
 
     max_iterations = 5
 
-    for iteration in range(max_iterations):
+    for _ in range(max_iterations):
 
-    
-        # Ask the LLM
-       
-
-        response = chat(
+        response = client.models.generate_content(
             model=MODEL,
-            messages=messages,
-            tools=list(available_tools.values()),
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                tools=[gemini_tools],
+            ),
         )
 
+        # Add Gemini's response to the conversation
+        contents.append(response.candidates[0].content)
 
-        
-        # Save assistant response
-  
+        # ------------------------------------------
+        # No tool requested
+        # ------------------------------------------
 
-        messages.append(response.message)
+        if not response.function_calls:
 
+            final_answer = response.text
 
-       
-        # Check whether the model requested a tool
-        
-
-        if not response.message.tool_calls:
-
-            final_answer = response.message.content
+            messages.append({
+                "role": "assistant",
+                "content": final_answer,
+            })
 
             return final_answer
 
+        # ------------------------------------------
+        # Tool requested
+        # ------------------------------------------
 
-        
-        # Execute requested tools
-      
+        for function_call in response.function_calls:
 
-        for tool_call in response.message.tool_calls:
-
-            function_name = tool_call.function.name
-            arguments = tool_call.function.arguments
-
-
-          
-            # Debug information in terminal
-           
+            function_name = function_call.name
+            arguments = dict(function_call.args)
 
             print("\n" + "=" * 60)
             print("TOOL REQUESTED:", function_name)
             print("ARGUMENTS:", arguments)
 
+            function_to_call = available_tools.get(function_name)
 
-          
-            # Find the Python function
-          
-
-            function_to_call = available_tools.get(
-                function_name
-            )
-
-
-           
-            # Handle unknown tool
-          
+            # --------------------------------------
+            # Tool does not exist
+            # --------------------------------------
 
             if function_to_call is None:
 
-                error_message = (
-                    f"Tool '{function_name}' was not found."
+                result = {
+                    "error": f"Tool '{function_name}' was not found."
+                }
+
+            else:
+
+                try:
+
+                    result = function_to_call(**arguments)
+
+                    print("TOOL RESULT:", result)
+
+                except Exception as e:
+
+                    result = {
+                        "error": str(e)
+                    }
+
+                    print("TOOL ERROR:", e)
+
+            # --------------------------------------
+            # Send tool result back to Gemini
+            # --------------------------------------
+
+            function_response = types.Part.from_function_response(
+                name=function_name,
+                response={
+                    "result": result
+                },
+                id=function_call.id,
+            )
+
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[function_response],
                 )
+            )
 
-                print("ERROR:", error_message)
-
-                messages.append({
-                    "role": "tool",
-                    "content": error_message,
-                    "tool_name": function_name,
-                })
-
-                continue
-
-
-           
-            # Execute the tool safely
-           
-
-            try:
-
-                result = function_to_call(
-                    **arguments
-                )
-
-                print("TOOL RESULT:", result)
-
-                messages.append({
-                    "role": "tool",
-                    "content": str(result),
-                    "tool_name": function_name,
-                })
-
-
-            
-            # Handle tool execution errors
-            
-
-            except Exception as e:
-
-                error_message = (
-                    f"Tool error: {str(e)}"
-                )
-
-                print("ERROR:", error_message)
-
-                messages.append({
-                    "role": "tool",
-                    "content": error_message,
-                    "tool_name": function_name,
-                })
-
-
-    
-    # MAXIMUM ITERATIONS REACHED
-  
-
-    return (
-        "I was unable to complete the request "
-        "within the allowed tool-call limit."
-    )
+    return "I was unable to complete the request within the allowed tool-call limit."
