@@ -286,16 +286,16 @@ def run_agent(user_input, messages):
 
                     print("TOOL ERROR:", e)
 
-            # --------------------------------------
+                  # --------------------------------------
             # Send tool result back to Gemini
             # --------------------------------------
 
-            function_response = types.Part.from_function_response(
-                name=function_name,
-                response={
-                    "result": result
-                },
-                id=function_call.id,
+            function_response = types.Part(
+                function_response=types.FunctionResponse(
+                    name=function_name,
+                    response={"result": result},
+                    id=function_call.id,
+                )
             )
 
             contents.append(
